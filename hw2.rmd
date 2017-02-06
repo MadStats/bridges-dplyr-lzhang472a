@@ -1,6 +1,6 @@
 ---
 title: "Practice on dplyr with bridges data"
-output: html_document
+output: word_document
 ---
 
 ## import the data
