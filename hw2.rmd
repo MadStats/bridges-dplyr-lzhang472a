@@ -1,0 +1,92 @@
+---
+title: "Practice on dplyr with bridges data"
+output: html_document
+---
+
+## import the data
+
+```{r}
+library(ggplot2)
+library(choroplethr)
+library(dplyr)
+library(readr)
+library(data.table)
+dest = "https://www.fhwa.dot.gov/bridge/nbi/2016/delimited/AK16.txt"
+tmp = fread(dest) 
+classes = sapply(tmp, class)
+states= read_csv("http://pages.stat.wisc.edu/~karlrohe/classes/data/stateAbv.txt")
+states=states[-(1:12),]
+states[51,] = c("WashDC", "DC")
+states[52,] = c("Puerto Rico", "PR")
+dest= rep("", 52)
+for(i in 1:52) dest[i]=paste("https://www.fhwa.dot.gov/bridge/nbi/2016/delimited/", states[i,2],"16.txt", sep = "") 
+x16 = ldply(dest, fread, colClasses = classes)  
+x16=tbl_df(x16)
+#here are the variables of potential interests
+keep = c("STATE_CODE_001", "STRUCTURE_NUMBER_008", "COUNTY_CODE_003", "LAT_016", "LONG_017", "TOLL_020", "ADT_029", "YEAR_ADT_030", "YEAR_BUILT_027", "TOTAL_IMP_COST_096")
+x = select(x16, one_of(keep))
+```
+
+In this part I just copy the code post on Github.
+
+## data wrangling
+
+In the lecture, I was deeply impressed by the "map" of Wisconsin only using the data of its bridges. I think it is a very cool idea to make a map of United States justing using the latitude and longitude of bridges in the country. Because it can reflect how economy develops in one states. So I dig into the variables of latitude and longitude to make an accurate map. 
+
+The first thing is that we should notice LAT_016 has 8 digits and LONG_017 has 9 digits for the longitude of US is mainly between W70 to W130. This is very important and we should care about it.
+
+The second thing to do is analyzing the structure of two variable, LAT_016 and LONG_017. In Karl's R code, he set all the 3 to 8 digits divided by 600000. But I think the first two digits inply degree while the 3 to 4 digits inply minutes and the 6 to 8 digits inply seconds. Because it is more accurate. So I do some summary to figure it out.
+
+```{r}
+summary(as.numeric(substr(x$LAT_016,5,6))>=60)
+plot(as.numeric(substr(x$LAT_016,5,6)),xlab="",ylab="")
+```
+From the plot and summary we can see that 99% of the 5 to 6 digits of data are under 60. The porobality of this event is nearly 0 if all the 3 to 8 digits of data are minutes. Because if it were ture, 5 to 6 digits of data are just the decimals part of minutes and they should have almostly uniform distribution from 0 to 99. Then it is impossiable to have 99% numbers under 60 with such a large amount.
+
+After figuring out these two points we can transform the data into a more accurate form.
+
+```{r}
+#I do the transformation separately because whenever I combine longitude transformation of 8 digits and 9 digits together, R get a bug. I do not know how to solve it. So I do it separately.
+min2dec.lat = function(x){
+  as.numeric(substr(x,1,2)) + as.numeric(substr(x,3,4))/60 + as.numeric(substr(x,5,8))/360000 %>% return
+}
+min2dec.lon8 = function(x){
+    as.numeric(substr(x,1,2)) + as.numeric(substr(x,3,4))/60 + as.numeric(substr(x,5,8))/360000 %>% return
+}
+min2dec.lon9 = function(x){
+    as.numeric(substr(x,1,3)) + as.numeric(substr(x,4,5))/60 + as.numeric(substr(x,6,9))/360000 %>% return
+}  
+#get rid of NA
+x = filter(x,is.na(x$LAT_016)==0&is.na(x$LONG_017)==0)
+#do latitude transformation and do a filter. Because USA is mainly between 20N and 60N except Hawaii and Alaska.
+x1 = mutate(x,lat = min2dec.lat(LAT_016))
+x1 = filter(x1,lat<60&lat>20)
+#do longitude transformation. I think these codes below are quite stupid.
+n=nchar(x1$LONG_017)
+x2=x1
+x3=x1
+x2 = mutate(x2[n==8,],lon = min2dec.lon8(LONG_017))
+x3 = mutate(x3[n==9,],lon = min2dec.lon9(LONG_017))
+x1$lon=rep(0,dim(x1)[1])
+x1[n==8,"lon"]=x2$lon
+x1[n==9,"lon"]=x3$lon
+#do filter according to geographic facts about USA.
+x1 = filter(x1,lon<130&lon>70)
+#set the longitude negative sign so the final plot will have the same direction as the real map.
+x1$lon=-x1$lon
+```
+
+## Plot the data and get interesting facts.
+
+```{r}
+ggplot(data = x1) +geom_point(mapping = aes(y = lat, x = lon))
+```
+We can see that this plot is almost identical to the real map. From the plot we can see that the blanks, which imply lack of bridges and potential economic downturn, are mainly around the mid-west states, such like Nevada, Utah, Arizona and New Mexcico. And there are also two blanks around Texas and Iowa.
+
+```{r}
+ggplot(data = x1) +geom_point(mapping = aes(y = lat, x = lon,col =YEAR_BUILT_027))
+ggplot(data = x1) +geom_point(mapping = aes(y = lat, x = lon,col =TOTAL_IMP_COST_096))
+ggplot(data = x1) +geom_point(mapping = aes(y = lat, x = lon,col =ADT_029))
+```
+
+We can do further analysis on the relationship between the accident rate and the year built or total improvement project cost.
